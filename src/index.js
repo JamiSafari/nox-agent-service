@@ -10,186 +10,188 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Wallet addresses for receiving payments
+// Wallet addresses
 const WALLETS = {
-  evm: process.env.EVM_WALLET || '0x0000000000000000000000000000000000000000',
+  evm: process.env.EVM_WALLET || '0x884428a7e667A8AC04EF904Ad8ec75E55bbC9Ad7',
   cardano: process.env.CARDANO_WALLET || 'addr_test1qr02ugx4tngn8uc5e5v8mtu2fpfprms4u6uzy0vvtgknudzkrj73vaz964ac2s5qm8rs7l05hq0vngcx0gpsxj0rzxzs7paafj'
 };
 
-// Service pricing (in USD)
+// Service pricing (USD)
 const PRICING = {
-  webResearch: {
-    quick: 5,      // $5 - quick web search
-    deep: 10       // $10 - comprehensive research
-  },
-  hitl: {
-    simple: 20,    // $20 - simple approval
-    medium: 35,    // $35 - requires analysis
-    complex: 50    // $50+ - complex judgment
-  },
-  webScrape: {
-    single: 3,     // $3 - single page
-    multi: 8       // $8 - multi-page crawl
-  }
+  'web-research-quick': 5,
+  'web-research-deep': 10,
+  'hitl-simple': 20,
+  'hitl-medium': 35,
+  'hitl-complex': 50,
+  'web-scrape-single': 3,
+  'web-scrape-multi': 8
 };
+
+// x402 Payment Requirements generator
+function getPaymentRequirements(service, amount) {
+  return {
+    x402Version: 1,
+    accepts: [
+      {
+        scheme: 'exact',
+        network: 'eip155:8453', // Base
+        maxAmountRequired: String(amount * 1000000), // USDC has 6 decimals
+        resource: `https://nox-agent.masumi.network/${service}`,
+        description: `Nox Agent - ${service}`,
+        mimeType: 'application/json',
+        payTo: WALLETS.evm,
+        maxTimeoutSeconds: 300,
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' // USDC on Base
+      },
+      {
+        scheme: 'exact',
+        network: 'eip155:84532', // Base Sepolia (testnet)
+        maxAmountRequired: String(amount * 1000000),
+        resource: `https://nox-agent.masumi.network/${service}`,
+        description: `Nox Agent - ${service}`,
+        mimeType: 'application/json',
+        payTo: WALLETS.evm,
+        maxTimeoutSeconds: 300,
+        asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' // USDC on Base Sepolia
+      }
+    ],
+    facilitatorUrl: process.env.X402_FACILITATOR_URL || 'https://x402.org/facilitator'
+  };
+}
+
+// x402 middleware - checks for payment header
+function x402Middleware(serviceName, priceUSD) {
+  return async (req, res, next) => {
+    const paymentHeader = req.headers['x-payment'];
+    
+    if (!paymentHeader) {
+      // Return 402 with payment requirements
+      res.status(402).json({
+        error: 'Payment Required',
+        message: `This service costs $${priceUSD} USD`,
+        paymentRequirements: getPaymentRequirements(serviceName, priceUSD),
+        paymentOptions: {
+          x402: getPaymentRequirements(serviceName, priceUSD),
+          masumi: {
+            endpoint: process.env.MASUMI_PAYMENT_URL,
+            agentId: 'cml1fwd6l000c5cmhr2b6ooi5'
+          },
+          cardano: {
+            wallet: WALLETS.cardano,
+            amount: Math.ceil(priceUSD * 3) + ' ADA'
+          }
+        }
+      });
+      return;
+    }
+
+    // TODO: Verify payment with facilitator
+    // For now, we'll accept any payment header as valid (testnet behavior)
+    console.log('Payment header received:', paymentHeader.substring(0, 50) + '...');
+    next();
+  };
+}
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', agent: 'Nox', version: '1.0.0' });
+  res.json({ status: 'ok', agent: 'Nox-Agent', version: '1.0.0' });
 });
 
-// Service availability
+// Root - API documentation
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Nox Agent Service',
+    description: 'AI Agent offering paid services via x402 multi-chain payments',
+    version: '1.0.0',
+    wallets: {
+      evm: WALLETS.evm,
+      cardano: WALLETS.cardano
+    },
+    services: {
+      'web-research': { quick: '$5', deep: '$10' },
+      'hitl-verification': { simple: '$20', medium: '$35', complex: '$50' },
+      'web-scraping': { single: '$3', multi: '$8' }
+    },
+    endpoints: {
+      'GET /health': 'Health check (free)',
+      'GET /availability': 'Service availability (free)',
+      'POST /research': 'Web research (paid - $5-10)',
+      'POST /hitl': 'Human verification (paid - $20-50)',
+      'POST /scrape': 'Web scraping (paid - $3-8)'
+    },
+    payment: {
+      methods: ['x402 (USDC on Base/Ethereum)', 'Masumi (ADA)', 'Direct Cardano'],
+      facilitator: process.env.X402_FACILITATOR_URL
+    }
+  });
+});
+
+// Free endpoints
 app.get('/availability', (req, res) => {
   res.json({
     status: 'available',
     services: ['web-research', 'hitl-verification', 'web-scraping'],
-    pricing: PRICING,
-    paymentMethods: ['x402-evm', 'x402-cardano', 'masumi']
+    pricing: PRICING
   });
 });
 
-// Input schema for Masumi compatibility
-app.get('/input_schema', (req, res) => {
+// Paid endpoints with x402
+
+// Web Research
+app.post('/research', x402Middleware('web-research', 5), async (req, res) => {
+  const { query, depth = 'quick' } = req.body;
+  
+  // TODO: Implement actual research logic
   res.json({
-    type: 'object',
-    properties: {
-      service: {
-        type: 'string',
-        enum: ['web-research', 'hitl-verification', 'web-scraping'],
-        description: 'Service type to request'
-      },
-      tier: {
-        type: 'string',
-        enum: ['quick', 'deep', 'simple', 'medium', 'complex', 'single', 'multi'],
-        description: 'Service tier (affects pricing)'
-      },
-      input: {
-        type: 'string',
-        description: 'The query, URL, or task description'
-      },
-      context: {
-        type: 'string',
-        description: 'Additional context for the request'
-      }
-    },
-    required: ['service', 'tier', 'input']
+    status: 'success',
+    query,
+    depth,
+    results: [
+      { title: 'Research Result 1', url: 'https://example.com/1', snippet: 'Sample result...' }
+    ],
+    note: 'Real implementation coming soon - will use web_search + web_fetch'
   });
 });
 
-// Quote endpoint - returns pricing before payment
-app.post('/quote', (req, res) => {
-  const { service, tier, input } = req.body;
+// HITL Verification
+app.post('/hitl', x402Middleware('hitl-verification', 20), async (req, res) => {
+  const { task, context, urgency = 'normal' } = req.body;
   
-  let price = 0;
-  let estimatedTime = '';
-  
-  switch(service) {
-    case 'web-research':
-      price = tier === 'deep' ? PRICING.webResearch.deep : PRICING.webResearch.quick;
-      estimatedTime = tier === 'deep' ? '5-10 minutes' : '1-2 minutes';
-      break;
-    case 'hitl-verification':
-      price = PRICING.hitl[tier] || PRICING.hitl.simple;
-      estimatedTime = '1-24 hours (depends on human availability)';
-      break;
-    case 'web-scraping':
-      price = tier === 'multi' ? PRICING.webScrape.multi : PRICING.webScrape.single;
-      estimatedTime = tier === 'multi' ? '3-5 minutes' : '30 seconds';
-      break;
-    default:
-      return res.status(400).json({ error: 'Unknown service type' });
-  }
-  
+  // TODO: Implement notification to Jami and response flow
   res.json({
-    service,
-    tier,
-    price_usd: price,
-    estimated_time: estimatedTime,
-    payment_options: [
-      {
-        method: 'x402-evm',
-        networks: ['eip155:8453', 'eip155:1', 'eip155:137'],
-        token: 'USDC',
-        amount: price,
-        payTo: WALLETS.evm
-      },
-      {
-        method: 'x402-cardano',
-        network: 'cardano-preprod',
-        token: 'ADA',
-        amount: Math.ceil(price * 3), // ~$0.35/ADA
-        payTo: WALLETS.cardano
-      },
-      {
-        method: 'masumi',
-        endpoint: process.env.MASUMI_PAYMENT_URL
-      }
-    ]
+    status: 'pending',
+    jobId: `hitl-${Date.now()}`,
+    task,
+    message: 'Request submitted for human review. Check back for status.',
+    estimatedTime: urgency === 'urgent' ? '1-4 hours' : '4-24 hours'
   });
 });
 
-// Start job endpoint (Masumi compatible)
-app.post('/start_job', async (req, res) => {
-  const { input_data } = req.body;
+// Web Scraping
+app.post('/scrape', x402Middleware('web-scraping', 3), async (req, res) => {
+  const { url, selector, waitFor } = req.body;
   
-  // Parse Masumi-style input
-  const data = {};
-  if (Array.isArray(input_data)) {
-    input_data.forEach(item => {
-      data[item.key] = item.value;
-    });
-  }
-  
-  const jobId = `nox-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // For now, return job created - actual execution would happen async
+  // TODO: Implement browser automation
   res.json({
-    job_id: jobId,
-    status: 'created',
-    message: 'Job created. Payment required to proceed.',
-    quote_url: `/quote`,
-    service: data.service || 'web-research',
-    input: data.input
+    status: 'success',
+    url,
+    note: 'Real implementation coming soon - will use browser control',
+    data: { placeholder: 'Scraped content would appear here' }
   });
 });
 
-// Job status
-app.get('/status', (req, res) => {
-  const { job_id } = req.query;
-  
-  // Placeholder - would check actual job status
-  res.json({
-    job_id,
-    status: 'pending_payment',
-    message: 'Awaiting payment confirmation'
-  });
-});
-
-// API documentation
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Nox Agent Service',
-    description: 'AI Agent offering Web Research, HITL Verification, and Web Scraping',
-    version: '1.0.0',
-    author: 'Jami / Masumi Network',
-    endpoints: {
-      '/health': 'Health check',
-      '/availability': 'Service availability and pricing',
-      '/input_schema': 'Input schema for requests',
-      '/quote': 'Get pricing quote before payment',
-      '/start_job': 'Start a new job (Masumi compatible)',
-      '/status': 'Check job status'
-    },
-    payment_methods: [
-      'x402 (EVM: Base, Ethereum, Polygon)',
-      'x402 (Cardano)',
-      'Masumi Payment Service'
-    ]
-  });
-});
-
+// Start server
 app.listen(PORT, () => {
-  console.log(`Nox Agent Service running on port ${PORT}`);
-  console.log(`Services: Web Research, HITL, Web Scraping`);
-  console.log(`Payment: x402 multi-chain + Masumi`);
+  console.log(`
+╔════════════════════════════════════════════════╗
+║           NOX AGENT SERVICE v1.0.0             ║
+╠════════════════════════════════════════════════╣
+║  Port: ${PORT}                                    ║
+║  EVM:  ${WALLETS.evm.substring(0,20)}...      ║
+║  ADA:  ${WALLETS.cardano.substring(0,20)}...  ║
+╠════════════════════════════════════════════════╣
+║  Services: Research | HITL | Scraping          ║
+║  Payments: x402 (USDC) | Masumi (ADA)          ║
+╚════════════════════════════════════════════════╝
+  `);
 });
