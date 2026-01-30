@@ -1,0 +1,19 @@
+{
+  "name": "nox-agent-service",
+  "version": "1.0.0",
+  "description": "Nox AI Agent - Web Research, HITL, Multi-chain payments via x402",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@x402/express": "^0.2.0",
+    "@x402/evm": "^0.2.0",
+    "@x402/core": "^0.2.0",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5"
+  }
+}
