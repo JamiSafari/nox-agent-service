@@ -163,6 +163,12 @@ function getPaymentRequirements(service, amount) {
 
 // Verify payment with x402 facilitator
 async function verifyPayment(paymentHeader, expectedAmount, resource) {
+  // TESTNET MODE: Skip verification entirely for testing
+  if (process.env.TESTNET_MODE === 'true') {
+    console.log('TESTNET MODE: Bypassing payment verification');
+    return { valid: true, testnet: true };
+  }
+  
   const facilitatorUrl = process.env.X402_FACILITATOR_URL || 'https://x402.org/facilitator';
   
   try {
@@ -193,11 +199,6 @@ async function verifyPayment(paymentHeader, expectedAmount, resource) {
     });
     
     if (!verifyResponse.ok) {
-      // Facilitator might not be available - fallback to testnet mode
-      if (process.env.TESTNET_MODE === 'true') {
-        console.log('Facilitator unavailable, testnet mode - accepting payment');
-        return { valid: true, testnet: true };
-      }
       return { valid: false, reason: 'Payment verification failed' };
     }
     
@@ -206,13 +207,6 @@ async function verifyPayment(paymentHeader, expectedAmount, resource) {
     
   } catch (err) {
     console.error('Payment verification error:', err.message);
-    
-    // In testnet mode, accept payments if facilitator is down
-    if (process.env.TESTNET_MODE === 'true') {
-      console.log('Verification error in testnet mode - accepting payment');
-      return { valid: true, testnet: true };
-    }
-    
     return { valid: false, reason: 'Payment verification unavailable' };
   }
 }
